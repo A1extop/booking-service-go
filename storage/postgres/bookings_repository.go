@@ -54,8 +54,21 @@ func (r *BookingsRepository) GetByID(ctx context.Context, id int64) (*models.Boo
 
 // Update обновляет статус бронирования.
 func (r *BookingsRepository) Update(ctx context.Context, booking *models.Booking) error {
+	var previousStatus *string
+	if ps := booking.PreviousStatus(); ps != "" {
+		s := string(ps)
+		previousStatus = &s
+	}
+
+	var cancellationRequestedAt *time.Time
+	if t := booking.CancellationRequestedAt(); !t.IsZero() {
+		cancellationRequestedAt = &t
+	}
+
 	tag, err := r.pool.Exec(ctx, queryUpdateBookingStatus,
 		string(booking.Status()),
+		previousStatus,
+		cancellationRequestedAt,
 		booking.ID(),
 	)
 	if err != nil {
@@ -137,40 +150,48 @@ func (r *BookingsRepository) GetAwaitingConfirmation(ctx context.Context, limit 
 
 // scanBooking сканирует одну строку в доменный объект Booking.
 func (r *BookingsRepository) scanBooking(row pgx.Row) (*models.Booking, error) {
-	var (
-		id         int64
-		status     string
-		userID     int64
-		resourceID int64
-		startDate  time.Time
-		endDate    time.Time
-		createdAt  time.Time
-	)
-
-	err := row.Scan(&id, &status, &userID, &resourceID, &startDate, &endDate, &createdAt)
-	if err != nil {
-		return nil, err
-	}
-
-	return models.RestoreBooking(id, models.BookingStatus(status), userID, resourceID, startDate, endDate, createdAt), nil
+	return scanBookingFields(row.Scan)
 }
 
 // scanBookingFromRows сканирует строку из pgx.Rows.
 func (r *BookingsRepository) scanBookingFromRows(rows pgx.Rows) (*models.Booking, error) {
+	return scanBookingFields(rows.Scan)
+}
+
+func scanBookingFields(scan func(dest ...any) error) (*models.Booking, error) {
 	var (
-		id         int64
-		status     string
-		userID     int64
-		resourceID int64
-		startDate  time.Time
-		endDate    time.Time
-		createdAt  time.Time
+		id                      int64
+		status                  string
+		userID                  int64
+		resourceID              int64
+		previousStatus          *string
+		cancellationRequestedAt *time.Time
+		startDate               time.Time
+		endDate                 time.Time
+		createdAt               time.Time
 	)
 
-	err := rows.Scan(&id, &status, &userID, &resourceID, &startDate, &endDate, &createdAt)
-	if err != nil {
+	if err := scan(
+		&id, &status, &userID, &resourceID,
+		&previousStatus, &cancellationRequestedAt,
+		&startDate, &endDate, &createdAt,
+	); err != nil {
 		return nil, err
 	}
 
-	return models.RestoreBooking(id, models.BookingStatus(status), userID, resourceID, startDate, endDate, createdAt), nil
+	var prev models.BookingStatus
+	if previousStatus != nil {
+		prev = models.BookingStatus(*previousStatus)
+	}
+
+	var cancelledAt time.Time
+	if cancellationRequestedAt != nil {
+		cancelledAt = *cancellationRequestedAt
+	}
+
+	return models.RestoreBooking(
+		id, models.BookingStatus(status), userID, resourceID,
+		prev, cancelledAt,
+		startDate, endDate, createdAt,
+	), nil
 }

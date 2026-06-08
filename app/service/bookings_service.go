@@ -80,13 +80,41 @@ func (s *BookingsService) Create(ctx context.Context, req dto.CreateBookingReque
 	return id, nil
 }
 
-// Cancel отменяет бронирование по ID.
+// RequestCancel инициирует отмену через compensating transaction (HTTP PUT /cancel).
 //
 // Шаги:
 //  1. Загрузка бронирования из БД
-//  2. Вызов доменного метода Cancel() (валидация перехода статуса)
+//  2. BeginCancel() — переход в cancellation_pending
 //  3. Сохранение обновлённого состояния
 //  4. Публикация команды в Catalog
+func (s *BookingsService) RequestCancel(ctx context.Context, id int64) error {
+	booking, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	if err := booking.BeginCancel(time.Now()); err != nil {
+		return err
+	}
+
+	if err := s.repo.Update(ctx, booking); err != nil {
+		return fmt.Errorf("обновление бронирования: %w", err)
+	}
+
+	s.logger.Info("отмена бронирования инициирована", zap.Int64("id", id))
+
+	if err := s.publisher.PublishCancelBookingJob(ctx, messaging.CancelBookingJobCommand{
+		EventId:   messaging.NewMessageID(),
+		RequestId: messaging.BookingIDToRequestID(id),
+	}); err != nil {
+		s.logger.Error("ошибка публикации CancelBookingJob", zap.Error(err), zap.Int64("bookingId", id))
+	}
+
+	return nil
+}
+
+// Cancel немедленно отменяет бронирование без compensating transaction.
+// Используется при отклонении создания Catalog (BookingJobDenied).
 func (s *BookingsService) Cancel(ctx context.Context, id int64) error {
 	booking, err := s.repo.GetByID(ctx, id)
 	if err != nil {
@@ -109,6 +137,51 @@ func (s *BookingsService) Cancel(ctx context.Context, id int64) error {
 	}); err != nil {
 		s.logger.Error("ошибка публикации CancelBookingJob", zap.Error(err), zap.Int64("bookingId", id))
 	}
+
+	return nil
+}
+
+// CompleteCancel завершает отмену после успешной обработки командой Catalog.
+func (s *BookingsService) CompleteCancel(ctx context.Context, id int64) error {
+	booking, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	if err := booking.CompleteCancel(); err != nil {
+		return err
+	}
+
+	if err := s.repo.Update(ctx, booking); err != nil {
+		return fmt.Errorf("обновление бронирования: %w", err)
+	}
+
+	s.logger.Info("отмена бронирования завершена", zap.Int64("id", id))
+
+	return nil
+}
+
+// HandleCancelError выполняет rollback при ошибке обработки команды отмены в Catalog (DLQ).
+func (s *BookingsService) HandleCancelError(ctx context.Context, requestID string) error {
+	bookingID, err := messaging.RequestIDToBookingID(requestID)
+	if err != nil {
+		return err
+	}
+
+	booking, err := s.repo.GetByID(ctx, bookingID)
+	if err != nil {
+		return err
+	}
+
+	if err := booking.RollbackCancel(); err != nil {
+		return err
+	}
+
+	if err := s.repo.Update(ctx, booking); err != nil {
+		return fmt.Errorf("обновление бронирования: %w", err)
+	}
+
+	s.logger.Info("отмена бронирования откачена", zap.Int64("id", bookingID))
 
 	return nil
 }
