@@ -44,8 +44,11 @@ type CatalogConfig struct {
 }
 
 type WorkerConfig struct {
-	ConfirmationInterval time.Duration `envconfig:"WORKER_CONFIRMATION_INTERVAL" default:"30s"`
-	ConfirmationBatch    int           `envconfig:"WORKER_CONFIRMATION_BATCH" default:"10"`
+	ConfirmationInterval      time.Duration `envconfig:"WORKER_CONFIRMATION_INTERVAL" default:"30s"`
+	ConfirmationBatch         int           `envconfig:"WORKER_CONFIRMATION_BATCH" default:"10"`
+	CancellationRetryInterval time.Duration `envconfig:"WORKER_CONFIRMATION_RETRY_INTERVAL" default:"60s"`
+	CancellationRetryTimeout  time.Duration `envconfig:"WORKER_CONFIRMATION_RETRY_TIMEOUT" default:"5m"`
+	CancellationRetryBatch    int           `envconfig:"WORKER_CONFIRMATION_RETRY_BATCH" default:"10"`
 }
 
 type RabbitMQConfig struct {

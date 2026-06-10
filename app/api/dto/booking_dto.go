@@ -1,5 +1,7 @@
 package dto
 
+import "time"
+
 // CreateBookingRequest -- запрос на создание бронирования.
 type CreateBookingRequest struct {
 	UserID     int64  `json:"userId"`
@@ -52,6 +54,35 @@ type ProblemDetails struct {
 	Title  string `json:"title"`
 	Status int    `json:"status"`
 	Detail string `json:"detail,omitempty"`
+}
+// BookingStatisticsResponse -- агрегированная статистика по бронированиям.
+type BookingStatisticsResponse struct {
+	TotalCount   int64               `json:"totalCount"`
+	ByStatus     []StatusCountItem   `json:"byStatus"`
+	TopResources []ResourceCountItem `json:"topResources"`
+}
+
+// StatusCountItem -- количество бронирований по статусу.
+type StatusCountItem struct {
+	Status string `json:"status"`
+	Count  int64  `json:"count"`
+}
+
+// ResourceCountItem -- количество бронирований по ресурсу.
+type ResourceCountItem struct {
+	ResourceID int64 `json:"resourceId"`
+	Count      int64 `json:"count"`
+}
+
+// HistoryItem -- запись audit log изменения статуса.
+type HistoryItem struct {
+	ID             int64     `json:"id"`
+	PreviousStatus string    `json:"previousStatus"`
+	Status         string    `json:"status"`
+	Initiator      string    `json:"initiator"`
+	Reason         string    `json:"reason"`
+	BookingID      int64     `json:"bookingId"`
+	ChangedAt      time.Time `json:"changedAt"`
 }
 
 // DateFormat -- формат даты для JSON-сериализации.

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -17,7 +18,7 @@ import (
 // BookingService определяет командные операции с бронированиями.
 type BookingService interface {
 	Create(ctx context.Context, req dto.CreateBookingRequest) (int64, error)
-	Cancel(ctx context.Context, id int64) error
+	RequestCancel(ctx context.Context, id int64) error
 }
 
 // BookingQueries определяет операции чтения бронирований.
@@ -25,6 +26,8 @@ type BookingQueries interface {
 	GetByID(ctx context.Context, id int64) (dto.BookingResponse, error)
 	GetByFilter(ctx context.Context, req dto.GetBookingsByFilterRequest) (dto.PagedResponse[dto.BookingResponse], error)
 	GetStatus(ctx context.Context, id int64) (models.BookingStatus, error)
+	GetStatistics(ctx context.Context, dateFrom, dateTo time.Time) (dto.BookingStatisticsResponse, error)
+	GetHistoryByBookingID(ctx context.Context, bookingID int64, page, size int) (dto.PagedResponse[dto.HistoryItem], error)
 }
 
 // BookingsHandler содержит обработчики HTTP-запросов для бронирований.
@@ -85,7 +88,7 @@ func (h *BookingsHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.service.Cancel(r.Context(), id); err != nil {
+	if err := h.service.RequestCancel(r.Context(), id); err != nil {
 		h.handleServiceError(w, err)
 		return
 	}
@@ -102,6 +105,23 @@ func (h *BookingsHandler) GetByFilter(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := h.queries.GetByFilter(r.Context(), req)
+	if err != nil {
+		h.handleServiceError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// Statistics обрабатывает GET /api/bookings/statistics.
+func (h *BookingsHandler) Statistics(w http.ResponseWriter, r *http.Request) {
+	dateFrom, dateTo, err := parseStatisticsDateRange(r)
+	if err != nil {
+		h.handleServiceError(w, err)
+		return
+	}
+
+	result, err := h.queries.GetStatistics(r.Context(), dateFrom, dateTo)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return
@@ -127,6 +147,24 @@ func (h *BookingsHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, dto.BookingStatusResponse{Status: string(status)})
 }
 
+// GetHistoryByID обрабатывает GET /api/bookings/{id}/history.
+func (h *BookingsHandler) GetHistoryByID(w http.ResponseWriter, r *http.Request) {
+	id, err := parseIDParam(r)
+	if err != nil {
+		writeProblemDetails(w, http.StatusBadRequest, "Некорректный ID", err.Error())
+		return
+	}
+
+	page, size := parsePageSize(r)
+	result, err := h.queries.GetHistoryByBookingID(r.Context(), id, page, size)
+	if err != nil {
+		h.handleServiceError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
 // handleServiceError маппит доменные ошибки на HTTP-ответы.
 func (h *BookingsHandler) handleServiceError(w http.ResponseWriter, err error) {
 	switch {
@@ -139,7 +177,9 @@ func (h *BookingsHandler) handleServiceError(w http.ResponseWriter, err error) {
 	case errors.Is(err, models.ErrInvalidUserID),
 		errors.Is(err, models.ErrInvalidResourceID),
 		errors.Is(err, models.ErrInvalidDateRange),
-		errors.Is(err, models.ErrEndDateBeforeStartDate):
+		errors.Is(err, models.ErrEndDateBeforeStartDate),
+		errors.Is(err, models.ErrMissingStatisticsParams),
+		errors.Is(err, models.ErrInvalidStatisticsDate):
 		writeProblemDetails(w, http.StatusBadRequest, "Ошибка валидации", err.Error())
 	default:
 		h.logger.Error("необработанная ошибка", zap.Error(err))
@@ -147,11 +187,51 @@ func (h *BookingsHandler) handleServiceError(w http.ResponseWriter, err error) {
 	}
 }
 
-// Вспомогательные функции
-
 func parseIDParam(r *http.Request) (int64, error) {
 	idStr := chi.URLParam(r, "id")
 	return strconv.ParseInt(idStr, 10, 64)
+}
+
+func parsePageSize(r *http.Request) (page, size int) {
+	page = 1
+	size = 25
+
+	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+		if v, err := strconv.Atoi(pageStr); err == nil && v > 0 {
+			page = v
+		}
+	}
+	if sizeStr := r.URL.Query().Get("size"); sizeStr != "" {
+		if v, err := strconv.Atoi(sizeStr); err == nil && v > 0 {
+			size = v
+		}
+	}
+
+	return page, size
+}
+
+func parseStatisticsDateRange(r *http.Request) (time.Time, time.Time, error) {
+	dateFromStr := r.URL.Query().Get("dateFrom")
+	dateToStr := r.URL.Query().Get("dateTo")
+	if dateFromStr == "" || dateToStr == "" {
+		return time.Time{}, time.Time{}, models.ErrMissingStatisticsParams
+	}
+
+	dateFrom, err := time.Parse(dto.DateFormat, dateFromStr)
+	if err != nil {
+		return time.Time{}, time.Time{}, models.ErrInvalidStatisticsDate
+	}
+
+	dateTo, err := time.Parse(dto.DateFormat, dateToStr)
+	if err != nil {
+		return time.Time{}, time.Time{}, models.ErrInvalidStatisticsDate
+	}
+
+	if dateTo.Before(dateFrom) {
+		return time.Time{}, time.Time{}, models.ErrEndDateBeforeStartDate
+	}
+
+	return dateFrom, dateTo, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
