@@ -16,6 +16,12 @@ type BookingRepository interface {
 	// UpdateWithHistory обновляет бронирование и сохраняет запись истории в одной транзакции.
 	UpdateWithHistory(ctx context.Context, booking *Booking, history *History) error
 
+	// UpdateWithHistoryAndEvent то же, что UpdateWithHistory, плюс запись event_id в processed_events.
+	UpdateWithHistoryAndEvent(ctx context.Context, booking *Booking, history *History, eventID string) error
+
+	// IsEventProcessed проверяет, было ли событие уже обработано.
+	IsEventProcessed(ctx context.Context, eventID string) (bool, error)
+
 	// GetByFilter возвращает список бронирований с пагинацией.
 	GetByFilter(ctx context.Context, filter BookingFilter) ([]Booking, int64, error)
 

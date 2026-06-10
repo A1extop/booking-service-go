@@ -1,7 +1,6 @@
 package main
 
 import (
-	"booking-service/app/worker"
 	"context"
 	"errors"
 	"fmt"
@@ -21,6 +20,7 @@ import (
 	"booking-service/app/messaging"
 	"booking-service/app/messaging/handlers"
 	"booking-service/app/service"
+	"booking-service/app/worker"
 	pgstore "booking-service/storage/postgres"
 )
 
@@ -78,11 +78,10 @@ func main() {
 	_ = catalogClient
 
 	// Хендлеры событий RabbitMQ
-
 	confirmedHandler := handlers.NewBookingConfirmedHandler(bookingsService, bookingsQueries, logger)
-	deniedHandler := handlers.NewBookingDeniedHandler(bookingsService, logger)
+	deniedHandler := handlers.NewBookingDeniedHandler(bookingsService, bookingsQueries, logger)
 	cancelledHandler := handlers.NewBookingCancelledHandler(bookingsService, logger)
-	cancelErrorHandler := handlers.NewCancelBookingErrorHandler(bookingsService, logger)
+	cancelErrorHandler := handlers.NewCancelBookingErrorHandler(bookingsService, bookingsQueries, logger)
 
 	// Контекст для graceful shutdown фоновых задач
 	ctx, cancel := context.WithCancel(context.Background())
@@ -99,6 +98,7 @@ func main() {
 		logger.Error("не удалось запустить consumer", zap.Error(err))
 		os.Exit(1)
 	}
+
 	cancellationRetryWorker := worker.NewCancellationRetryWorker(
 		repo,
 		publisher,
@@ -108,6 +108,7 @@ func main() {
 		logger,
 	)
 	go cancellationRetryWorker.Run(ctx)
+
 	// HTTP-хендлеры и роутер
 	bookingsHandler := handler.NewBookingsHandler(bookingsService, bookingsQueries, logger)
 	router := api.NewRouter(bookingsHandler)

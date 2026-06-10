@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"booking-service/app/models"
@@ -89,6 +90,42 @@ func (r *BookingsRepository) UpdateWithHistory(ctx context.Context, booking *mod
 	}
 
 	return nil
+}
+
+// UpdateWithHistoryAndEvent обновляет бронирование, историю и помечает событие обработанным в одной транзакции.
+func (r *BookingsRepository) UpdateWithHistoryAndEvent(ctx context.Context, booking *models.Booking, history *models.History, eventID string) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("начало транзакции: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if err := updateBooking(ctx, tx, booking); err != nil {
+		return err
+	}
+
+	history.BookingID = booking.ID()
+	if err := insertHistory(ctx, tx, history); err != nil {
+		return err
+	}
+
+	if err := insertProcessedEvent(ctx, tx, eventID); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("фиксация транзакции: %w", err)
+	}
+
+	return nil
+}
+
+func (r *BookingsRepository) IsEventProcessed(ctx context.Context, eventID string) (bool, error) {
+	var exists bool
+	if err := r.pool.QueryRow(ctx, queryIsEventProcessed, eventID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("проверка обработанного события: %w", err)
+	}
+	return exists, nil
 }
 
 // GetByFilter возвращает бронирования с фильтрацией и пагинацией.
@@ -287,6 +324,22 @@ func updateBooking(ctx context.Context, tx pgx.Tx, booking *models.Booking) erro
 		return models.ErrBookingNotFound
 	}
 	return nil
+}
+
+func insertProcessedEvent(ctx context.Context, tx pgx.Tx, eventID string) error {
+	_, err := tx.Exec(ctx, queryInsertProcessedEvent, eventID)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return models.ErrEventAlreadyProcessed
+		}
+		return fmt.Errorf("сохранение обработанного события: %w", err)
+	}
+	return nil
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 func insertHistory(ctx context.Context, tx pgx.Tx, history *models.History) error {

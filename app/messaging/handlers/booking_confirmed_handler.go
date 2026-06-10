@@ -35,6 +35,12 @@ func (h *BookingConfirmedHandler) Handle(ctx context.Context, body []byte) error
 		return fmt.Errorf("десериализация BookingJobConfirmed: %w", err)
 	}
 
+	if skip, err := skipDuplicateEvent(ctx, h.queries, h.logger, event.EventId); err != nil {
+		return err
+	} else if skip {
+		return nil
+	}
+
 	bookingID, err := messaging.RequestIDToBookingID(event.RequestId)
 	if err != nil {
 		return fmt.Errorf("извлечение bookingId из RequestId: %w", err)
@@ -44,15 +50,19 @@ func (h *BookingConfirmedHandler) Handle(ctx context.Context, body []byte) error
 		zap.Int64("bookingId", bookingID),
 		zap.Int64("catalogJobId", event.Id),
 	)
+
 	status, err := h.queries.GetStatus(ctx, bookingID)
 	if err != nil {
 		return fmt.Errorf("ошибка получения статуса: %w", err)
 	}
 	if status == models.BookingStatusCancellationPending {
-		h.logger.Warn("обнаружен race condition", zap.Int64("bookingId", bookingID), zap.Int64("catalogJobId", event.Id))
+		h.logger.Warn("обнаружен race condition",
+			zap.Int64("bookingId", bookingID),
+			zap.Int64("catalogJobId", event.Id),
+		)
 	}
 
-	if err := h.service.Confirm(ctx, bookingID); err != nil {
+	if err := h.service.ConfirmWithEvent(ctx, bookingID, event.EventId); err != nil {
 		return fmt.Errorf("подтверждение бронирования %d: %w", bookingID, err)
 	}
 
