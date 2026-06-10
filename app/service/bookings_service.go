@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -40,6 +41,26 @@ func (s *BookingsService) persistStatusChange(
 		return err
 	}
 	return s.repo.UpdateWithHistory(ctx, booking, history)
+}
+
+func (s *BookingsService) persistStatusChangeWithEvent(
+	ctx context.Context,
+	booking *models.Booking,
+	previousStatus models.BookingStatus,
+	initiator, cause, eventID string,
+) error {
+	history, err := models.NewHistory(booking.Status(), previousStatus, booking.ID(), initiator, cause)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.UpdateWithHistoryAndEvent(ctx, booking, history, eventID); err != nil {
+		if errors.Is(err, models.ErrEventAlreadyProcessed) {
+			s.logger.Warn("событие уже обработано (конкурентная обработка)", zap.String("eventId", eventID))
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func userInitiator(userID int64) string {
@@ -126,6 +147,34 @@ func (s *BookingsService) RequestCancel(ctx context.Context, id int64) error {
 	return nil
 }
 
+// CancelWithEvent отменяет бронирование по событию с защитой идемпотентности.
+func (s *BookingsService) CancelWithEvent(ctx context.Context, id int64, eventID string) error {
+	booking, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	previousStatus := booking.Status()
+	if err := booking.Cancel(time.Now()); err != nil {
+		return err
+	}
+
+	if err := s.persistStatusChangeWithEvent(ctx, booking, previousStatus, models.InitiatorSystem, models.CauseDenied, eventID); err != nil {
+		return fmt.Errorf("обновление бронирования: %w", err)
+	}
+
+	s.logger.Info("бронирование отменено", zap.Int64("id", id))
+
+	if err := s.publisher.PublishCancelBookingJob(ctx, messaging.CancelBookingJobCommand{
+		EventId:   messaging.NewMessageID(),
+		RequestId: messaging.BookingIDToRequestID(id),
+	}); err != nil {
+		s.logger.Error("ошибка публикации CancelBookingJob", zap.Error(err), zap.Int64("bookingId", id))
+	}
+
+	return nil
+}
+
 // Cancel немедленно отменяет бронирование без compensating transaction.
 func (s *BookingsService) Cancel(ctx context.Context, id int64) error {
 	booking, err := s.repo.GetByID(ctx, id)
@@ -174,6 +223,31 @@ func (s *BookingsService) CompleteCancel(ctx context.Context, id int64) error {
 	return nil
 }
 
+// HandleCancelErrorWithEvent выполняет rollback отмены по событию с защитой идемпотентности.
+func (s *BookingsService) HandleCancelErrorWithEvent(ctx context.Context, requestID, eventID string) error {
+	bookingID, err := messaging.RequestIDToBookingID(requestID)
+	if err != nil {
+		return err
+	}
+
+	booking, err := s.repo.GetByID(ctx, bookingID)
+	if err != nil {
+		return err
+	}
+
+	previousStatus := booking.Status()
+	if err := booking.RollbackCancel(); err != nil {
+		return err
+	}
+
+	if err := s.persistStatusChangeWithEvent(ctx, booking, previousStatus, models.InitiatorSystem, models.CauseCancellationFailed, eventID); err != nil {
+		return fmt.Errorf("обновление бронирования: %w", err)
+	}
+
+	s.logger.Info("отмена бронирования откачена", zap.Int64("id", bookingID))
+	return nil
+}
+
 // HandleCancelError выполняет rollback при ошибке обработки команды отмены в Catalog (DLQ).
 func (s *BookingsService) HandleCancelError(ctx context.Context, requestID string) error {
 	bookingID, err := messaging.RequestIDToBookingID(requestID)
@@ -196,6 +270,26 @@ func (s *BookingsService) HandleCancelError(ctx context.Context, requestID strin
 	}
 
 	s.logger.Info("отмена бронирования откачена", zap.Int64("id", bookingID))
+	return nil
+}
+
+// ConfirmWithEvent подтверждает бронирование по событию с защитой идемпотентности.
+func (s *BookingsService) ConfirmWithEvent(ctx context.Context, id int64, eventID string) error {
+	booking, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	previousStatus := booking.Status()
+	if err := booking.Confirm(); err != nil {
+		return err
+	}
+
+	if err := s.persistStatusChangeWithEvent(ctx, booking, previousStatus, models.InitiatorSystem, models.CauseConfirmed, eventID); err != nil {
+		return fmt.Errorf("обновление бронирования: %w", err)
+	}
+
+	s.logger.Info("бронирование подтверждено", zap.Int64("id", id))
 	return nil
 }
 

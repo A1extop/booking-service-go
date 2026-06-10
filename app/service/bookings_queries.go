@@ -35,6 +35,11 @@ func (q *BookingsQueries) GetByID(ctx context.Context, id int64) (dto.BookingRes
 	return mapBookingToResponse(booking), nil
 }
 
+// IsEventProcessed проверяет, было ли событие уже обработано.
+func (q *BookingsQueries) IsEventProcessed(ctx context.Context, eventID string) (bool, error) {
+	return q.repo.IsEventProcessed(ctx, eventID)
+}
+
 // GetStatus возвращает статус бронирования по ID.
 func (q *BookingsQueries) GetStatus(ctx context.Context, id int64) (models.BookingStatus, error) {
 	booking, err := q.repo.GetByID(ctx, id)

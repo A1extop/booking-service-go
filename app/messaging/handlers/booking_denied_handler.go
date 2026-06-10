@@ -14,13 +14,15 @@ import (
 // BookingDeniedHandler обрабатывает события BookingJobDenied.
 type BookingDeniedHandler struct {
 	service *service.BookingsService
+	queries *service.BookingsQueries
 	logger  *zap.Logger
 }
 
 // NewBookingDeniedHandler создаёт новый обработчик.
-func NewBookingDeniedHandler(svc *service.BookingsService, logger *zap.Logger) *BookingDeniedHandler {
+func NewBookingDeniedHandler(svc *service.BookingsService, queries *service.BookingsQueries, logger *zap.Logger) *BookingDeniedHandler {
 	return &BookingDeniedHandler{
 		service: svc,
+		queries: queries,
 		logger:  logger,
 	}
 }
@@ -30,6 +32,12 @@ func (h *BookingDeniedHandler) Handle(ctx context.Context, body []byte) error {
 	var event messaging.BookingJobDenied
 	if err := json.Unmarshal(body, &event); err != nil {
 		return fmt.Errorf("десериализация BookingJobDenied: %w", err)
+	}
+
+	if skip, err := skipDuplicateEvent(ctx, h.queries, h.logger, event.EventId); err != nil {
+		return err
+	} else if skip {
+		return nil
 	}
 
 	bookingID, err := messaging.RequestIDToBookingID(event.RequestId)
@@ -43,7 +51,7 @@ func (h *BookingDeniedHandler) Handle(ctx context.Context, body []byte) error {
 		zap.String("reason", event.Reason),
 	)
 
-	if err := h.service.Cancel(ctx, bookingID); err != nil {
+	if err := h.service.CancelWithEvent(ctx, bookingID, event.EventId); err != nil {
 		return fmt.Errorf("отмена бронирования %d: %w", bookingID, err)
 	}
 

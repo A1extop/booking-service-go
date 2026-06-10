@@ -16,4 +16,5 @@ var (
 	ErrInvalidBookingID        = errors.New("невалидный id бронирования")
 	ErrInvalidInitiator        = errors.New("пустой инициатор")
 	ErrInvalidCause            = errors.New("пустая причина")
+	ErrEventAlreadyProcessed   = errors.New("событие уже обработано")
 )

@@ -94,4 +94,10 @@ const (
 	queryInsertBookingStatusHistory = `
 	INSERT INTO booking_status_history (status, previous_status, booking_id, initiator, cause)
 	VALUES ($1, $2, $3, $4, $5)`
+
+	queryIsEventProcessed = `
+	SELECT EXISTS(SELECT 1 FROM processed_events WHERE event_id = $1)`
+
+	queryInsertProcessedEvent = `
+	INSERT INTO processed_events (event_id) VALUES ($1)`
 )
