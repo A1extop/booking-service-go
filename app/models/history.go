@@ -13,7 +13,7 @@ const (
 	CauseCancellationFailed    = "cancellation_failed"
 )
 
-// History — запись audit log об изменении статуса бронирования.
+// History  запись audit log об изменении статуса бронирования.
 type History struct {
 	ID             int64
 	PreviousStatus string
@@ -25,7 +25,6 @@ type History struct {
 }
 
 // NewHistory создаёт запись истории статуса.
-// bookingID может быть 0 при создании бронирования — будет проставлен в репозитории.
 func NewHistory(
 	newStatus BookingStatus,
 	previousStatus BookingStatus,
