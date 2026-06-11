@@ -55,6 +55,16 @@ type CancelBookingJobError struct {
 	Reason    string `json:"Reason"`
 }
 
+// BookingStatusChangedEvent -- доменное событие изменения статуса бронирования.
+type BookingStatusChangedEvent struct {
+	EventId   string `json:"EventId"`
+	BookingId int64  `json:"BookingId"`
+	OldStatus string `json:"OldStatus"`
+	NewStatus string `json:"NewStatus"`
+	ChangedAt string `json:"ChangedAt"`
+	Reason    string `json:"Reason"`
+}
+
 // Routing keys для входящих событий от Catalog (consumer side, Rebus convention).
 const (
 	RoutingKeyBookingJobConfirmed  = "BookingService.Catalog.Async.Api.Contracts.Events.BookingJobConfirmed, BookingService.Catalog.Async.Api.Contracts"
@@ -75,6 +85,15 @@ const (
 const (
 	RoutingKeyCreateBookingJob = "BookingService.Catalog.Async.Api.Contracts.Requests.CreateBookingJobRequest, BookingService.Catalog.Async.Api.Contracts"
 	RoutingKeyCancelBookingJob = "BookingService.Catalog.Async.Api.Contracts.Requests.CancelBookingJobByRequestIdRequest, BookingService.Catalog.Async.Api.Contracts"
+)
+
+// Routing key для доменных событий бронирования.
+const RoutingKeyBookingStatusChanged = "BookingService.Booking.Events.BookingStatusChangedEvent, BookingService.Booking.Events"
+
+// Имена exchange и очереди для доменных событий.
+const (
+	DomainEventsExchangeName = "booking-domain-events"
+	DomainEventsQueueName    = "booking-domain-events.booking-status-events"
 )
 
 // NewMessageID генерирует случайный UUID v4.

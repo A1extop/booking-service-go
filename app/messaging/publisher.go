@@ -12,21 +12,24 @@ import (
 
 // Publisher публикует сообщения в RabbitMQ.
 type Publisher struct {
-	conn                  *Connection
-	exchangeName          string
-	publisherExchangeName string
-	logger                *zap.Logger
+	conn                     *Connection
+	exchangeName             string
+	publisherExchangeName    string
+	domainEventsExchangeName string
+	logger                   *zap.Logger
 }
 
 // NewPublisher создаёт новый Publisher.
 // exchangeName — exchange для получения ответов (consumer side).
 // publisherExchangeName — exchange для отправки команд в Catalog.
-func NewPublisher(conn *Connection, exchangeName, publisherExchangeName string, logger *zap.Logger) *Publisher {
+// domainEventsExchangeName — exchange для доменных событий бронирования.
+func NewPublisher(conn *Connection, exchangeName, publisherExchangeName, domainEventsExchangeName string, logger *zap.Logger) *Publisher {
 	return &Publisher{
-		conn:                  conn,
-		exchangeName:          exchangeName,
-		publisherExchangeName: publisherExchangeName,
-		logger:                logger,
+		conn:                     conn,
+		exchangeName:             exchangeName,
+		publisherExchangeName:    publisherExchangeName,
+		domainEventsExchangeName: domainEventsExchangeName,
+		logger:                   logger,
 	}
 }
 
@@ -71,6 +74,11 @@ func (p *Publisher) PublishCancelBookingJob(ctx context.Context, cmd CancelBooki
 	return p.publishToCatalog(ctx, RoutingKeyCancelBookingJob, cmd)
 }
 
+// PublishBookingStatusChanged публикует доменное событие изменения статуса бронирования.
+func (p *Publisher) PublishBookingStatusChanged(ctx context.Context, event BookingStatusChangedEvent) error {
+	return p.publishToDomainEvents(ctx, RoutingKeyBookingStatusChanged, event)
+}
+
 // publishToCatalog публикует сообщение в Catalog через Rebus-совместимый exchange.
 // Добавляет заголовки, необходимые для Rebus (rbs2-*).
 func (p *Publisher) publishToCatalog(ctx context.Context, routingKey string, message any) error {
@@ -109,6 +117,37 @@ func (p *Publisher) publishToCatalog(ctx context.Context, routingKey string, mes
 	p.logger.Debug("сообщение опубликовано в Catalog",
 		zap.String("routingKey", routingKey),
 		zap.String("exchange", p.publisherExchangeName),
+		zap.String("body", string(body)),
+	)
+
+	return nil
+}
+
+func (p *Publisher) publishToDomainEvents(ctx context.Context, routingKey string, message any) error {
+	body, err := json.Marshal(message)
+	if err != nil {
+		return fmt.Errorf("сериализация сообщения: %w", err)
+	}
+
+	err = p.conn.Channel().PublishWithContext(
+		ctx,
+		p.domainEventsExchangeName,
+		routingKey,
+		false,
+		false,
+		amqp.Publishing{
+			ContentType:  "application/json",
+			DeliveryMode: amqp.Persistent,
+			Body:         body,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("публикация доменного события (routing key: %s): %w", routingKey, err)
+	}
+
+	p.logger.Debug("доменное событие опубликовано",
+		zap.String("routingKey", routingKey),
+		zap.String("exchange", p.domainEventsExchangeName),
 		zap.String("body", string(body)),
 	)
 

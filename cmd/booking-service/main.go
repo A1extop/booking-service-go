@@ -62,7 +62,26 @@ func main() {
 	}
 	defer mqConn.Close()
 
-	publisher := messaging.NewPublisher(mqConn, cfg.RabbitMQ.ExchangeName, cfg.RabbitMQ.PublisherExchangeName, logger)
+	if err := mqConn.DeclareExchange(cfg.RabbitMQ.DomainEventsExchangeName); err != nil {
+		logger.Error("не удалось объявить exchange доменных событий", zap.Error(err))
+		os.Exit(1)
+	}
+	if _, err := mqConn.DeclareAndBindQueue(
+		cfg.RabbitMQ.DomainEventsQueueName,
+		cfg.RabbitMQ.DomainEventsExchangeName,
+		messaging.RoutingKeyBookingStatusChanged,
+	); err != nil {
+		logger.Error("не удалось объявить очередь доменных событий", zap.Error(err))
+		os.Exit(1)
+	}
+
+	publisher := messaging.NewPublisher(
+		mqConn,
+		cfg.RabbitMQ.ExchangeName,
+		cfg.RabbitMQ.PublisherExchangeName,
+		cfg.RabbitMQ.DomainEventsExchangeName,
+		logger,
+	)
 
 	// Сервисный слой
 	bookingsService := service.NewBookingsService(repo, publisher, logger)
@@ -108,6 +127,16 @@ func main() {
 		logger,
 	)
 	go cancellationRetryWorker.Run(ctx)
+
+	outboxWorker := worker.NewOutboxWorker(
+		repo,
+		publisher,
+		cfg.Worker.OutboxInterval,
+		cfg.Worker.OutboxBatch,
+		cfg.Worker.OutboxMaxRetries,
+		logger,
+	)
+	go outboxWorker.Run(ctx)
 
 	// HTTP-хендлеры и роутер
 	bookingsHandler := handler.NewBookingsHandler(bookingsService, bookingsQueries, logger)
