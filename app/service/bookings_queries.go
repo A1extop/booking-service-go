@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/patrickmn/go-cache"
 	"go.uber.org/zap"
 
 	"booking-service/app/api/dto"
@@ -13,16 +14,24 @@ import (
 
 // BookingsQueries обрабатывает запросы (чтение данных) для бронирований.
 type BookingsQueries struct {
-	repo   models.BookingRepository
-	logger *zap.Logger
+	repo            models.BookingRepository
+	statsCache      *cache.Cache
+	statsMaxItems   int
+	logger          *zap.Logger
 }
 
 // NewBookingsQueries создаёт новый BookingsQueries.
-func NewBookingsQueries(repo models.BookingRepository, logger *zap.Logger) *BookingsQueries {
+func NewBookingsQueries(repo models.BookingRepository, statsCache *cache.Cache, statsMaxItems int, logger *zap.Logger) *BookingsQueries {
 	return &BookingsQueries{
-		repo:   repo,
-		logger: logger,
+		repo:          repo,
+		statsCache:    statsCache,
+		statsMaxItems: statsMaxItems,
+		logger:        logger,
 	}
+}
+
+func statisticsCacheKey(dateFrom, dateTo time.Time) string {
+	return dateFrom.Format(dto.DateFormat) + "|" + dateTo.Format(dto.DateFormat)
 }
 
 // GetByID возвращает бронирование по ID.
@@ -93,6 +102,14 @@ func (q *BookingsQueries) GetByFilter(ctx context.Context, req dto.GetBookingsBy
 
 // GetStatistics возвращает агрегированную статистику за период (dateTo включительно).
 func (q *BookingsQueries) GetStatistics(ctx context.Context, dateFrom, dateTo time.Time) (dto.BookingStatisticsResponse, error) {
+	cacheKey := statisticsCacheKey(dateFrom, dateTo)
+
+	if q.statsCache != nil {
+		if cached, found := q.statsCache.Get(cacheKey); found {
+			return cached.(dto.BookingStatisticsResponse), nil
+		}
+	}
+
 	dateToExclusive := dateTo.AddDate(0, 0, 1)
 
 	data, err := q.repo.GetStatistics(ctx, dateFrom, dateToExclusive)
@@ -100,7 +117,16 @@ func (q *BookingsQueries) GetStatistics(ctx context.Context, dateFrom, dateTo ti
 		return dto.BookingStatisticsResponse{}, fmt.Errorf("получение статистики: %w", err)
 	}
 
-	return mapStatisticsToResponse(data), nil
+	result := mapStatisticsToResponse(data)
+
+	if q.statsCache != nil {
+		if q.statsMaxItems > 0 && q.statsCache.ItemCount() >= q.statsMaxItems {
+			q.statsCache.Flush()
+		}
+		q.statsCache.Set(cacheKey, result, cache.DefaultExpiration)
+	}
+
+	return result, nil
 }
 
 func (q *BookingsQueries) GetHistoryByBookingID(ctx context.Context, bookingID int64, page, size int) (dto.PagedResponse[dto.HistoryItem], error) {

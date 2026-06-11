@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/patrickmn/go-cache"
 	"go.uber.org/zap"
 
 	"booking-service/app/api/dto"
@@ -20,6 +21,7 @@ type BookingsService struct {
 	repo         models.BookingRepository
 	publisher    *messaging.Publisher
 	notification *notification.Client
+	statsCache   *cache.Cache
 	logger       *zap.Logger
 }
 
@@ -28,13 +30,21 @@ func NewBookingsService(
 	repo models.BookingRepository,
 	publisher *messaging.Publisher,
 	notificationClient *notification.Client,
+	statsCache *cache.Cache,
 	logger *zap.Logger,
 ) *BookingsService {
 	return &BookingsService{
 		repo:         repo,
 		publisher:    publisher,
 		notification: notificationClient,
+		statsCache:   statsCache,
 		logger:       logger,
+	}
+}
+
+func (s *BookingsService) invalidateStatisticsCache() {
+	if s.statsCache != nil {
+		s.statsCache.Flush()
 	}
 }
 
@@ -69,6 +79,7 @@ func (s *BookingsService) persistStatusChange(
 	if err := s.repo.UpdateWithHistory(ctx, booking, history, outbox); err != nil {
 		return false, err
 	}
+	s.invalidateStatisticsCache()
 	return true, nil
 }
 
@@ -90,6 +101,7 @@ func (s *BookingsService) persistStatusChangeWithEvent(
 		}
 		return false, err
 	}
+	s.invalidateStatisticsCache()
 	return true, nil
 }
 
@@ -144,6 +156,7 @@ func (s *BookingsService) Create(ctx context.Context, req dto.CreateBookingReque
 	if err != nil {
 		return 0, fmt.Errorf("сохранение бронирования: %w", err)
 	}
+	s.invalidateStatisticsCache()
 
 	s.logger.Info("бронирование создано",
 		zap.Int64("id", id),

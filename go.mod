@@ -6,6 +6,7 @@ require (
 	github.com/go-chi/chi/v5 v5.2.1
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/kelseyhightower/envconfig v1.4.0
+	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pressly/goose/v3 v3.27.0
 	github.com/rabbitmq/amqp091-go v1.10.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.35.0

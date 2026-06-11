@@ -13,6 +13,7 @@ type Config struct {
 	Postgres     PostgresConfig
 	Catalog      CatalogConfig
 	Notification NotificationConfig
+	Cache        CacheConfig
 	Worker       WorkerConfig
 	RabbitMQ     RabbitMQConfig
 }
@@ -49,6 +50,12 @@ type NotificationConfig struct {
 	Timeout        time.Duration `envconfig:"NOTIFICATION_TIMEOUT" default:"10s"`
 	MaxRetries     int           `envconfig:"NOTIFICATION_MAX_RETRIES" default:"3"`
 	RetryBaseDelay time.Duration `envconfig:"NOTIFICATION_RETRY_BASE_DELAY" default:"1s"`
+}
+
+type CacheConfig struct {
+	StatisticsTTL         time.Duration `envconfig:"CACHE_STATISTICS_TTL" default:"5m"`
+	StatisticsCleanup     time.Duration `envconfig:"CACHE_STATISTICS_CLEANUP_INTERVAL" default:"10m"`
+	StatisticsMaxItems    int           `envconfig:"CACHE_STATISTICS_MAX_ITEMS" default:"1000"`
 }
 
 type WorkerConfig struct {
