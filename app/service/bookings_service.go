@@ -40,7 +40,8 @@ func (s *BookingsService) persistStatusChange(
 	if err != nil {
 		return false, err
 	}
-	if err := s.repo.UpdateWithHistory(ctx, booking, history); err != nil {
+	outbox := newStatusChangedOutboxEvent(booking.ID(), previousStatus, booking.Status(), cause)
+	if err := s.repo.UpdateWithHistory(ctx, booking, history, outbox); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -56,7 +57,8 @@ func (s *BookingsService) persistStatusChangeWithEvent(
 	if err != nil {
 		return false, err
 	}
-	if err := s.repo.UpdateWithHistoryAndEvent(ctx, booking, history, eventID); err != nil {
+	outbox := newStatusChangedOutboxEvent(booking.ID(), previousStatus, booking.Status(), cause)
+	if err := s.repo.UpdateWithHistoryAndEvent(ctx, booking, history, eventID, outbox); err != nil {
 		if errors.Is(err, models.ErrEventAlreadyProcessed) {
 			s.logger.Warn("событие уже обработано (конкурентная обработка)", zap.String("eventId", eventID))
 			return false, nil
@@ -66,24 +68,18 @@ func (s *BookingsService) persistStatusChangeWithEvent(
 	return true, nil
 }
 
-func (s *BookingsService) publishStatusChanged(
-	ctx context.Context,
+func newStatusChangedOutboxEvent(
 	bookingID int64,
 	previousStatus, newStatus models.BookingStatus,
 	reason string,
-) {
-	if err := s.publisher.PublishBookingStatusChanged(ctx, messaging.BookingStatusChangedEvent{
+) *models.BookingStatusChangedEvent {
+	return &models.BookingStatusChangedEvent{
 		EventId:   messaging.NewMessageID(),
 		BookingId: bookingID,
 		OldStatus: string(previousStatus),
 		NewStatus: string(newStatus),
 		ChangedAt: time.Now().UTC().Format(time.RFC3339),
 		Reason:    reason,
-	}); err != nil {
-		s.logger.Error("ошибка публикации BookingStatusChanged",
-			zap.Error(err),
-			zap.Int64("bookingId", bookingID),
-		)
 	}
 }
 
@@ -155,12 +151,8 @@ func (s *BookingsService) RequestCancel(ctx context.Context, id int64) error {
 		return err
 	}
 
-	updated, err := s.persistStatusChange(ctx, booking, previousStatus, userInitiator(booking.UserID()), models.CauseCancellationRequested)
-	if err != nil {
+	if _, err := s.persistStatusChange(ctx, booking, previousStatus, userInitiator(booking.UserID()), models.CauseCancellationRequested); err != nil {
 		return fmt.Errorf("обновление бронирования: %w", err)
-	}
-	if updated {
-		s.publishStatusChanged(ctx, id, previousStatus, booking.Status(), models.CauseCancellationRequested)
 	}
 
 	s.logger.Info("отмена бронирования инициирована", zap.Int64("id", id))
@@ -187,12 +179,8 @@ func (s *BookingsService) CancelWithEvent(ctx context.Context, id int64, eventID
 		return err
 	}
 
-	updated, err := s.persistStatusChangeWithEvent(ctx, booking, previousStatus, models.InitiatorSystem, models.CauseDenied, eventID)
-	if err != nil {
+	if _, err := s.persistStatusChangeWithEvent(ctx, booking, previousStatus, models.InitiatorSystem, models.CauseDenied, eventID); err != nil {
 		return fmt.Errorf("обновление бронирования: %w", err)
-	}
-	if updated {
-		s.publishStatusChanged(ctx, id, previousStatus, booking.Status(), models.CauseDenied)
 	}
 
 	s.logger.Info("бронирование отменено", zap.Int64("id", id))
@@ -219,12 +207,8 @@ func (s *BookingsService) Cancel(ctx context.Context, id int64) error {
 		return err
 	}
 
-	updated, err := s.persistStatusChange(ctx, booking, previousStatus, models.InitiatorSystem, models.CauseDenied)
-	if err != nil {
+	if _, err := s.persistStatusChange(ctx, booking, previousStatus, models.InitiatorSystem, models.CauseDenied); err != nil {
 		return fmt.Errorf("обновление бронирования: %w", err)
-	}
-	if updated {
-		s.publishStatusChanged(ctx, id, previousStatus, booking.Status(), models.CauseDenied)
 	}
 
 	s.logger.Info("бронирование отменено", zap.Int64("id", id))
@@ -251,12 +235,8 @@ func (s *BookingsService) CompleteCancel(ctx context.Context, id int64) error {
 		return err
 	}
 
-	updated, err := s.persistStatusChange(ctx, booking, previousStatus, models.InitiatorSystem, models.CauseCancellationCompleted)
-	if err != nil {
+	if _, err := s.persistStatusChange(ctx, booking, previousStatus, models.InitiatorSystem, models.CauseCancellationCompleted); err != nil {
 		return fmt.Errorf("обновление бронирования: %w", err)
-	}
-	if updated {
-		s.publishStatusChanged(ctx, id, previousStatus, booking.Status(), models.CauseCancellationCompleted)
 	}
 
 	s.logger.Info("отмена бронирования завершена", zap.Int64("id", id))
@@ -325,12 +305,8 @@ func (s *BookingsService) ConfirmWithEvent(ctx context.Context, id int64, eventI
 		return err
 	}
 
-	updated, err := s.persistStatusChangeWithEvent(ctx, booking, previousStatus, models.InitiatorSystem, models.CauseConfirmed, eventID)
-	if err != nil {
+	if _, err := s.persistStatusChangeWithEvent(ctx, booking, previousStatus, models.InitiatorSystem, models.CauseConfirmed, eventID); err != nil {
 		return fmt.Errorf("обновление бронирования: %w", err)
-	}
-	if updated {
-		s.publishStatusChanged(ctx, id, previousStatus, booking.Status(), models.CauseConfirmed)
 	}
 
 	s.logger.Info("бронирование подтверждено", zap.Int64("id", id))
@@ -349,12 +325,8 @@ func (s *BookingsService) Confirm(ctx context.Context, id int64) error {
 		return err
 	}
 
-	updated, err := s.persistStatusChange(ctx, booking, previousStatus, models.InitiatorSystem, models.CauseConfirmed)
-	if err != nil {
+	if _, err := s.persistStatusChange(ctx, booking, previousStatus, models.InitiatorSystem, models.CauseConfirmed); err != nil {
 		return fmt.Errorf("обновление бронирования: %w", err)
-	}
-	if updated {
-		s.publishStatusChanged(ctx, id, previousStatus, booking.Status(), models.CauseConfirmed)
 	}
 
 	s.logger.Info("бронирование подтверждено", zap.Int64("id", id))

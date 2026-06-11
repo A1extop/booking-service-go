@@ -13,11 +13,11 @@ type BookingRepository interface {
 	// GetByID возвращает бронирование по ID.
 	GetByID(ctx context.Context, id int64) (*Booking, error)
 
-	// UpdateWithHistory обновляет бронирование и сохраняет запись истории в одной транзакции.
-	UpdateWithHistory(ctx context.Context, booking *Booking, history *History) error
+	// UpdateWithHistory обновляет бронирование, историю и (опционально) outbox-сообщение в одной транзакции.
+	UpdateWithHistory(ctx context.Context, booking *Booking, history *History, outbox *BookingStatusChangedEvent) error
 
 	// UpdateWithHistoryAndEvent то же, что UpdateWithHistory, плюс запись event_id в processed_events.
-	UpdateWithHistoryAndEvent(ctx context.Context, booking *Booking, history *History, eventID string) error
+	UpdateWithHistoryAndEvent(ctx context.Context, booking *Booking, history *History, eventID string, outbox *BookingStatusChangedEvent) error
 
 	// IsEventProcessed проверяет, было ли событие уже обработано.
 	IsEventProcessed(ctx context.Context, eventID string) (bool, error)
@@ -38,6 +38,12 @@ type BookingRepository interface {
 
 	// GetHistoryByBookingID возвращает историю статусов бронирования с пагинацией.
 	GetHistoryByBookingID(ctx context.Context, bookingID int64, page, size int) ([]History, int64, error)
+
+	GetOutboxMessages(ctx context.Context, maxRetry int64, limit int) ([]BookingEvent, error)
+
+	IncrementOutboxRetry(ctx context.Context, eventID string) error
+
+	DeleteOutboxMessage(ctx context.Context, eventID string) error
 }
 
 // BookingFilter содержит параметры фильтрации и пагинации.

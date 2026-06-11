@@ -128,6 +128,16 @@ func main() {
 	)
 	go cancellationRetryWorker.Run(ctx)
 
+	outboxWorker := worker.NewOutboxWorker(
+		repo,
+		publisher,
+		cfg.Worker.OutboxInterval,
+		cfg.Worker.OutboxBatch,
+		cfg.Worker.OutboxMaxRetries,
+		logger,
+	)
+	go outboxWorker.Run(ctx)
+
 	// HTTP-хендлеры и роутер
 	bookingsHandler := handler.NewBookingsHandler(bookingsService, bookingsQueries, logger)
 	router := api.NewRouter(bookingsHandler)

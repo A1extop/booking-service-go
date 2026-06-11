@@ -49,6 +49,9 @@ type WorkerConfig struct {
 	CancellationRetryInterval time.Duration `envconfig:"WORKER_CONFIRMATION_RETRY_INTERVAL" default:"60s"`
 	CancellationRetryTimeout  time.Duration `envconfig:"WORKER_CONFIRMATION_RETRY_TIMEOUT" default:"5m"`
 	CancellationRetryBatch    int           `envconfig:"WORKER_CONFIRMATION_RETRY_BATCH" default:"10"`
+	OutboxInterval            time.Duration `envconfig:"WORKER_OUTBOX_INTERVAL" default:"5s"`
+	OutboxBatch               int           `envconfig:"WORKER_OUTBOX_BATCH" default:"10"`
+	OutboxMaxRetries          int64         `envconfig:"WORKER_OUTBOX_MAX_RETRIES" default:"5"`
 }
 
 type RabbitMQConfig struct {
