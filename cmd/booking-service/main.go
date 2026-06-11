@@ -16,6 +16,7 @@ import (
 	"booking-service/app/api"
 	"booking-service/app/api/handler"
 	"booking-service/app/clients/catalog"
+	"booking-service/app/clients/notification"
 	"booking-service/app/config"
 	"booking-service/app/messaging"
 	"booking-service/app/messaging/handlers"
@@ -62,12 +63,27 @@ func main() {
 	}
 	defer mqConn.Close()
 
-	publisher := messaging.NewPublisher(mqConn, cfg.RabbitMQ.ExchangeName, cfg.RabbitMQ.PublisherExchangeName, logger)
+	if err := mqConn.DeclareExchange(cfg.RabbitMQ.DomainEventsExchangeName); err != nil {
+		logger.Error("не удалось объявить exchange доменных событий", zap.Error(err))
+		os.Exit(1)
+	}
+	if _, err := mqConn.DeclareAndBindQueue(
+		cfg.RabbitMQ.DomainEventsQueueName,
+		cfg.RabbitMQ.DomainEventsExchangeName,
+		messaging.RoutingKeyBookingStatusChanged,
+	); err != nil {
+		logger.Error("не удалось объявить очередь доменных событий", zap.Error(err))
+		os.Exit(1)
+	}
 
-	// Сервисный слой
-	bookingsService := service.NewBookingsService(repo, publisher, logger)
-	bookingsQueries := service.NewBookingsQueries(repo, logger)
-	// Catalog-клиент
+	publisher := messaging.NewPublisher(
+		mqConn,
+		cfg.RabbitMQ.ExchangeName,
+		cfg.RabbitMQ.PublisherExchangeName,
+		cfg.RabbitMQ.DomainEventsExchangeName,
+		logger,
+	)
+
 	catalogClient := catalog.NewClient(
 		cfg.Catalog.BaseURL,
 		cfg.Catalog.Timeout,
@@ -76,6 +92,17 @@ func main() {
 		logger,
 	)
 	_ = catalogClient
+
+	notificationClient := notification.NewClient(
+		cfg.Notification.BaseURL,
+		cfg.Notification.Timeout,
+		cfg.Notification.MaxRetries,
+		cfg.Notification.RetryBaseDelay,
+		logger,
+	)
+
+	bookingsService := service.NewBookingsService(repo, publisher, notificationClient, logger)
+	bookingsQueries := service.NewBookingsQueries(repo, logger)
 
 	// Хендлеры событий RabbitMQ
 	confirmedHandler := handlers.NewBookingConfirmedHandler(bookingsService, bookingsQueries, logger)
@@ -108,6 +135,16 @@ func main() {
 		logger,
 	)
 	go cancellationRetryWorker.Run(ctx)
+
+	outboxWorker := worker.NewOutboxWorker(
+		repo,
+		publisher,
+		cfg.Worker.OutboxInterval,
+		cfg.Worker.OutboxBatch,
+		cfg.Worker.OutboxMaxRetries,
+		logger,
+	)
+	go outboxWorker.Run(ctx)
 
 	// HTTP-хендлеры и роутер
 	bookingsHandler := handler.NewBookingsHandler(bookingsService, bookingsQueries, logger)

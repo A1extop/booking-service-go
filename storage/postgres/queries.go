@@ -100,4 +100,22 @@ const (
 
 	queryInsertProcessedEvent = `
 	INSERT INTO processed_events (event_id) VALUES ($1)`
+
+	queryCreateOutboxMessage = `INSERT INTO outbox_messages (event_id, message) VALUES ($1, $2)`
+
+	queryGetOutboxMessageForRetry = `
+	SELECT event_id, message, retry
+	FROM outbox_messages
+	WHERE retry < $1
+	ORDER BY retry ASC, event_id ASC
+	LIMIT $2`
+
+	queryIncrementOutboxRetry = `
+	UPDATE outbox_messages
+	SET retry = retry + 1
+	WHERE event_id = $1`
+
+	queryDeleteOutboxMessage = `
+	DELETE FROM outbox_messages
+	WHERE event_id = $1`
 )
