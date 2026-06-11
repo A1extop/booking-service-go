@@ -1,0 +1,25 @@
+{
+  "mappings": [
+    {
+      "scenarioName": "Notification retry",
+      "requiredScenarioState": "Started",
+      "newScenarioState": "First request failed",
+      "request": { "method": "POST", "url": "/api/notifications" },
+      "response": {
+        "status": 500,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"error\": \"Internal Server Error\"}"
+      }
+    },
+    {
+      "scenarioName": "Notification retry",
+      "requiredScenarioState": "First request failed",
+      "request": { "method": "POST", "url": "/api/notifications" },
+      "response": {
+        "status": 202,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{}"
+      }
+    }
+  ]
+}

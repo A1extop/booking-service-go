@@ -61,6 +61,17 @@ services:
       timeout: 10s
       retries: 3
 
+  notification-mock:
+    image: wiremock/wiremock:latest
+    container_name: notification-service-mock
+    ports:
+      - "9000:8080"
+    volumes:
+      - ./notification-mock/mappings:/home/wiremock/mappings
+    command:
+      - --global-response-templating
+      - --verbose
+
   booking-host:
     build:
       context: ../..
@@ -74,6 +85,8 @@ services:
         condition: service_started
       rabbitmq:
         condition: service_healthy
+      notification-mock:
+        condition: service_started
 
   booking-db:
     image: postgres:16-alpine

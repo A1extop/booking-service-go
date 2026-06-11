@@ -8,12 +8,13 @@ import (
 )
 
 type Config struct {
-	App      AppConfig
-	HTTP     HTTPConfig
-	Postgres PostgresConfig
-	Catalog  CatalogConfig
-	Worker   WorkerConfig
-	RabbitMQ RabbitMQConfig
+	App          AppConfig
+	HTTP         HTTPConfig
+	Postgres     PostgresConfig
+	Catalog      CatalogConfig
+	Notification NotificationConfig
+	Worker       WorkerConfig
+	RabbitMQ     RabbitMQConfig
 }
 
 type AppConfig struct {
@@ -41,6 +42,13 @@ type CatalogConfig struct {
 	Timeout        time.Duration `envconfig:"CATALOG_TIMEOUT" default:"10s"`
 	MaxRetries     int           `envconfig:"CATALOG_MAX_RETRIES" default:"3"`
 	RetryBaseDelay time.Duration `envconfig:"CATALOG_RETRY_BASE_DELAY" default:"1s"`
+}
+
+type NotificationConfig struct {
+	BaseURL        string        `envconfig:"NOTIFICATION_BASE_URL" default:"http://localhost:9000"`
+	Timeout        time.Duration `envconfig:"NOTIFICATION_TIMEOUT" default:"10s"`
+	MaxRetries     int           `envconfig:"NOTIFICATION_MAX_RETRIES" default:"3"`
+	RetryBaseDelay time.Duration `envconfig:"NOTIFICATION_RETRY_BASE_DELAY" default:"1s"`
 }
 
 type WorkerConfig struct {
