@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -69,7 +70,7 @@ func (r *BookingsRepository) GetByID(ctx context.Context, id int64) (*models.Boo
 }
 
 // UpdateWithHistory обновляет бронирование и сохраняет запись истории в одной транзакции.
-func (r *BookingsRepository) UpdateWithHistory(ctx context.Context, booking *models.Booking, history *models.History) error {
+func (r *BookingsRepository) UpdateWithHistory(ctx context.Context, booking *models.Booking, history *models.History, outbox *models.BookingStatusChangedEvent) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("начало транзакции: %w", err)
@@ -85,6 +86,10 @@ func (r *BookingsRepository) UpdateWithHistory(ctx context.Context, booking *mod
 		return err
 	}
 
+	if err := insertOutboxMessage(ctx, tx, outbox); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("фиксация транзакции: %w", err)
 	}
@@ -93,7 +98,7 @@ func (r *BookingsRepository) UpdateWithHistory(ctx context.Context, booking *mod
 }
 
 // UpdateWithHistoryAndEvent обновляет бронирование, историю и помечает событие обработанным в одной транзакции.
-func (r *BookingsRepository) UpdateWithHistoryAndEvent(ctx context.Context, booking *models.Booking, history *models.History, eventID string) error {
+func (r *BookingsRepository) UpdateWithHistoryAndEvent(ctx context.Context, booking *models.Booking, history *models.History, eventID string, outbox *models.BookingStatusChangedEvent) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("начало транзакции: %w", err)
@@ -110,6 +115,10 @@ func (r *BookingsRepository) UpdateWithHistoryAndEvent(ctx context.Context, book
 	}
 
 	if err := insertProcessedEvent(ctx, tx, eventID); err != nil {
+		return err
+	}
+
+	if err := insertOutboxMessage(ctx, tx, outbox); err != nil {
 		return err
 	}
 
@@ -299,6 +308,49 @@ func (r *BookingsRepository) GetHistoryByBookingID(ctx context.Context, bookingI
 	return histories, totalCount, nil
 }
 
+func (r *BookingsRepository) GetOutboxMessages(ctx context.Context, maxRetry int64, limit int) ([]models.BookingEvent, error) {
+	rows, err := r.pool.Query(ctx, queryGetOutboxMessageForRetry, maxRetry, limit)
+	if err != nil {
+		return nil, fmt.Errorf("получение outbox: %w", err)
+	}
+	defer rows.Close()
+
+	var events []models.BookingEvent
+	for rows.Next() {
+		outbox, err := scanOutboxFields(rows)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, *outbox)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return events, nil
+}
+
+func (r *BookingsRepository) IncrementOutboxRetry(ctx context.Context, eventID string) error {
+	tag, err := r.pool.Exec(ctx, queryIncrementOutboxRetry, eventID)
+	if err != nil {
+		return fmt.Errorf("увеличение retry outbox event_id=%s: %w", eventID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("outbox-сообщение не найдено: event_id=%s", eventID)
+	}
+	return nil
+}
+
+func (r *BookingsRepository) DeleteOutboxMessage(ctx context.Context, eventID string) error {
+	tag, err := r.pool.Exec(ctx, queryDeleteOutboxMessage, eventID)
+	if err != nil {
+		return fmt.Errorf("удаление outbox event_id=%s: %w", eventID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("outbox-сообщение не найдено: event_id=%s", eventID)
+	}
+	return nil
+}
 func updateBooking(ctx context.Context, tx pgx.Tx, booking *models.Booking) error {
 	var previousStatus *string
 	if ps := booking.PreviousStatus(); ps != "" {
@@ -342,6 +394,23 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
+func insertOutboxMessage(ctx context.Context, tx pgx.Tx, event *models.BookingStatusChangedEvent) error {
+	if event == nil {
+		return nil
+	}
+
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("сериализация outbox-сообщения: %w", err)
+	}
+
+	_, err = tx.Exec(ctx, queryCreateOutboxMessage, event.EventId, payload)
+	if err != nil {
+		return fmt.Errorf("сохранение outbox-сообщения: %w", err)
+	}
+	return nil
+}
+
 func insertHistory(ctx context.Context, tx pgx.Tx, history *models.History) error {
 	var previousStatus *string
 	if history.PreviousStatus != "" {
@@ -369,7 +438,27 @@ func (r *BookingsRepository) scanBooking(row pgx.Row) (*models.Booking, error) {
 func (r *BookingsRepository) scanBookingFromRows(rows pgx.Rows) (*models.Booking, error) {
 	return scanBookingFields(rows.Scan)
 }
+func scanOutboxFields(row pgx.Row) (*models.BookingEvent, error) {
+	var (
+		eventID string
+		payload []byte
+		retry   int64
+	)
+	if err := row.Scan(&eventID, &payload, &retry); err != nil {
+		return nil, err
+	}
 
+	var message models.BookingStatusChangedEvent
+	if err := json.Unmarshal(payload, &message); err != nil {
+		return nil, fmt.Errorf("десериализация outbox-сообщения: %w", err)
+	}
+
+	return &models.BookingEvent{
+		EventId: eventID,
+		Message: message,
+		Retry:   retry,
+	}, nil
+}
 func scanHistory(scan func(dest ...any) error) (*models.History, error) {
 	var (
 		id         int64

@@ -3,13 +3,16 @@ MIGRATE_DSN := postgres://booking:booking@localhost:5433/booking?sslmode=disable
 GOLANGCI_LINT_BIN := $(shell go env GOPATH)/bin/golangci-lint
 GOVERSION := $(shell go env GOVERSION)
 
-.PHONY: up down migrate tests coverage lint
+.PHONY: up down migrate tests integration-tests coverage lint
 
 up:
 	docker compose -f $(COMPOSE_FILE) up -d --build
 
 tests:
 	go test ./... | grep -v "no test files"
+
+integration-tests:
+	go test -tags=integration -v ./storage/postgres/...
 
 coverage:
 	go test -coverprofile=coverage.out ./...
